@@ -30,15 +30,21 @@ struct Register {
 
 type It<'a> = Peekable<std::slice::Iter<'a, &'a str>>;
 
+#[derive(Clone, Copy, Debug)]
+pub enum Radix {
+    Dec = 10,
+    Hex = 16,
+}
+
 impl Register {
     pub fn parse(src: &str) -> Result<Register> {
         let pieces = src.split(';').collect::<Vec<_>>();
         if pieces.is_empty() {
             bail!("poorly formed");
         }
-        let logical = parse(pieces.get(0).ok_or(ParseError::Malformed)?, 10)?;
-        let physical = parse_phys(pieces.get(1).map_or("", |v| v), 16)?;
-        let dict = parse_dict(pieces.get(2..pieces.len()).map_or(&[], |v| v), 16)?;
+        let logical = parse(pieces.get(0).ok_or(ParseError::Malformed)?, Radix::Dec)?;
+        let physical = parse_phys(pieces.get(1).map_or("", |v| v), Radix::Hex)?;
+        let dict = parse_dict(pieces.get(2..pieces.len()).map_or(&[], |v| v), Radix::Hex)?;
         Ok(Register {
             logical,
             physical,
@@ -73,7 +79,7 @@ impl Register {
     }
 }
 
-fn parse(src: &str, radix: u32) -> Result<Vec<Part>> {
+fn parse(src: &str, radix: Radix) -> Result<Vec<Part>> {
     let tokens = tokenize(src);
     let mut iter = tokens.iter().peekable();
     match parse_list(&mut iter, radix)? {
@@ -82,24 +88,24 @@ fn parse(src: &str, radix: u32) -> Result<Vec<Part>> {
     }
 }
 
-fn parse_phys(str: &str, radix: u32) -> Result<(Vec<Part>, Vec<Part>)> {
+fn parse_phys(str: &str, radix: Radix) -> Result<(Vec<Part>, Vec<Part>)> {
     let pieces = str.split('x').collect::<Vec<_>>();
     if pieces.len() != 2 {
         bail!("bad physical");
     }
-    let names = parse(&pieces[0], 10)?;
+    let names = parse(&pieces[0], Radix::Dec)?;
     let vals = parse(&pieces[1], radix)?;
     Ok((names, vals))
 }
 
-fn parse_dict(srcs: &[&str], radix: u32) -> Result<HashMap<String, Vec<String>>> {
+fn parse_dict(srcs: &[&str], radix: Radix) -> Result<HashMap<String, Vec<String>>> {
     let mut dict = HashMap::new();
     for src in srcs {
         let v = src.split('=').collect::<Vec<_>>();
         if v.len() != 2 {
             bail!(ParseError::Tokens);
         }
-        let a = parse(v[0], 10)?;
+        let a = parse(v[0], Radix::Dec)?;
         let a = expand_form(&a);
         let b = parse(v[1], radix)?;
         let b = expand_form(&b);
@@ -140,7 +146,7 @@ fn tokenize(mut src: &str) -> Vec<&str> {
     tokens
 }
 
-fn parse_part(it: &mut It, radix: u32) -> Result<Part> {
+fn parse_part(it: &mut It, radix: Radix) -> Result<Part> {
     let mut part = Vec::<Part>::new();
     while let Some(_) = it.peek() {
         match it.next() {
@@ -160,7 +166,7 @@ fn parse_part(it: &mut It, radix: u32) -> Result<Part> {
     })
 }
 
-fn parse_list(it: &mut It, radix: u32) -> Result<Part> {
+fn parse_list(it: &mut It, radix: Radix) -> Result<Part> {
     let mut list = vec![];
     while let Some(_) = it.peek() {
         list.push(parse_part(it, radix)?);
@@ -179,7 +185,7 @@ fn parse_list(it: &mut It, radix: u32) -> Result<Part> {
     Ok(Part::List(list))
 }
 
-fn parse_atom(base: &str, it: &mut It, radix: u32) -> Result<Part> {
+fn parse_atom(base: &str, it: &mut It, radix: Radix) -> Result<Part> {
     let mut atom = String::from(base);
     if let Some(&&":") = it.peek() {
         let _ = it.next();
@@ -196,7 +202,7 @@ fn parse_atom(base: &str, it: &mut It, radix: u32) -> Result<Part> {
     Ok(atoms)
 }
 
-fn parse_inst_num(src: &str, radix: u32) -> Result<Vec<String>> {
+fn parse_inst_num(src: &str, radix: Radix) -> Result<Vec<String>> {
     if src.is_empty() {
         bail!(ParseError::Eof);
     }
@@ -209,15 +215,20 @@ fn parse_inst_num(src: &str, radix: u32) -> Result<Vec<String>> {
         (Some(b), Some(a), None) => (a, b),
         _ => bail!(ParseError::Tokens),
     };
-    let a = u32::from_str_radix(astr, radix)?;
-    let b = u32::from_str_radix(bstr, radix)?;
+    let a = u32::from_str_radix(astr, radix as u32)?;
+    let b = u32::from_str_radix(bstr, radix as u32)?;
     let r = u32::min(a, b)..=u32::max(a, b);
     let v: Vec<_> = if a > b {
         r.rev().collect()
     } else {
         r.collect()
     };
-    Ok(v.into_iter().map(|k| format!("{k}")).collect())
+    Ok(v.into_iter()
+        .map(|k| match radix {
+            Radix::Hex => format!("{k:x}"),
+            Radix::Dec => format!("{k}"),
+        })
+        .collect())
 }
 
 fn expand_form(parts: &[Part]) -> Vec<String> {
