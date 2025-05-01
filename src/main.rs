@@ -43,8 +43,8 @@ impl Register {
             bail!("poorly formed");
         }
         let logical = parse(pieces.get(0).ok_or(ParseError::Malformed)?, Radix::Dec)?;
-        let physical = parse_phys(pieces.get(1).map_or("", |v| v), Radix::Hex)?;
-        let dict = parse_dict(pieces.get(2..pieces.len()).map_or(&[], |v| v), Radix::Hex)?;
+        let physical = parse_phys(pieces.get(1).map_or("", |v| v))?;
+        let dict = parse_dict(pieces.get(2..pieces.len()).map_or(&[], |v| v))?;
         Ok(Register {
             logical,
             physical,
@@ -88,17 +88,17 @@ fn parse(src: &str, radix: Radix) -> Result<Vec<Part>> {
     }
 }
 
-fn parse_phys(str: &str, radix: Radix) -> Result<(Vec<Part>, Vec<Part>)> {
+fn parse_phys(str: &str) -> Result<(Vec<Part>, Vec<Part>)> {
     let pieces = str.split('x').collect::<Vec<_>>();
     if pieces.len() != 2 {
         bail!("bad physical");
     }
     let names = parse(&pieces[0], Radix::Dec)?;
-    let vals = parse(&pieces[1], radix)?;
+    let vals = parse(&pieces[1], Radix::Hex)?;
     Ok((names, vals))
 }
 
-fn parse_dict(srcs: &[&str], radix: Radix) -> Result<HashMap<String, Vec<String>>> {
+fn parse_dict(srcs: &[&str]) -> Result<HashMap<String, Vec<String>>> {
     let mut dict = HashMap::new();
     for src in srcs {
         let v = src.split('=').collect::<Vec<_>>();
@@ -107,7 +107,7 @@ fn parse_dict(srcs: &[&str], radix: Radix) -> Result<HashMap<String, Vec<String>
         }
         let a = parse(v[0], Radix::Dec)?;
         let a = expand_form(&a);
-        let b = parse(v[1], radix)?;
+        let b = parse(v[1], Radix::Hex)?;
         let b = expand_form(&b);
         if a.len() == b.len() {
             for (a, b) in a.into_iter().zip(b.into_iter()) {
@@ -218,6 +218,7 @@ fn parse_inst_num(src: &str, radix: Radix) -> Result<Vec<String>> {
     let a = u32::from_str_radix(astr, radix as u32)?;
     let b = u32::from_str_radix(bstr, radix as u32)?;
     let r = u32::min(a, b)..=u32::max(a, b);
+    let width = usize::min(astr.len(), bstr.len());
     let v: Vec<_> = if a > b {
         r.rev().collect()
     } else {
@@ -225,8 +226,8 @@ fn parse_inst_num(src: &str, radix: Radix) -> Result<Vec<String>> {
     };
     Ok(v.into_iter()
         .map(|k| match radix {
-            Radix::Hex => format!("{k:x}"),
-            Radix::Dec => format!("{k}"),
+            Radix::Hex => format!("{k:0>width$x}"),
+            Radix::Dec => format!("{k:0>width$}"),
         })
         .collect())
 }
@@ -316,7 +317,7 @@ mod parse_inst_num_tests {
 
     #[test]
     fn single() {
-        let v = parse_inst_num("4", 16);
+        let v = parse_inst_num("4", Radix::Hex);
         assert!(v.is_ok_and(|v| {
             assert_eq!(&v, &["4"]);
             true
@@ -325,26 +326,36 @@ mod parse_inst_num_tests {
 
     #[test]
     fn range() {
-        let v = parse_inst_num("2:0", 10);
+        let v = parse_inst_num("2:0", Radix::Dec);
         assert!(v.is_ok_and(|v| {
             assert_eq!(&v, &["2", "1", "0"]);
             true
         }));
-        let v = parse_inst_num("0:2", 10);
+        let v = parse_inst_num("0:2", Radix::Dec);
         assert!(v.is_ok_and(|v| {
             assert_eq!(&v, &["0", "1", "2"]);
+            true
+        }));
+        let v = parse_inst_num("B:9", Radix::Hex);
+        assert!(v.is_ok_and(|v| {
+            assert_eq!(&v, &["b", "a", "9"]);
+            true
+        }));
+        let v = parse_inst_num("0b:09", Radix::Hex);
+        assert!(v.is_ok_and(|v| {
+            assert_eq!(&v, &["0b", "0a", "09"]);
             true
         }));
     }
 
     #[test]
     fn empty() {
-        assert!(parse_inst_num("", 0).is_err());
+        assert!(parse_inst_num("", Radix::Hex).is_err());
     }
 
     #[test]
     fn multi() {
-        assert!(parse_inst_num("1:2:3", 10).is_err());
+        assert!(parse_inst_num("1:2:3", Radix::Dec).is_err());
     }
 }
 
