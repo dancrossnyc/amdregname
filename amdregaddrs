@@ -1,0 +1,6 @@
+#!/bin/sh
+if [ "$#" = "0" ]; then
+	sed -e 's/[ \t\v\r]//g;/^$/d' | xargs amdregname
+else
+	amdregname "$@"
+fi
